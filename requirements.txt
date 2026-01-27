@@ -1,0 +1,92 @@
+#########################################
+# LangChain – Núcleo y utilidades
+#########################################
+
+# Framework principal de LangChain.
+langchain
+
+# Componentes internos compartidos de LangChain.
+langchain-core
+
+# Separadores de texto optimizados.
+langchain-text-splitters
+
+# Integraciones con el cliente moderno de OpenAI.
+langchain-openai
+
+# Conectores de LangChain para modelos Gemini (Google AI).
+langchain-google-genai
+
+# Integraciones generales mantenidas por la comunidad.
+langchain-community
+
+# Integración oficial LangChain ↔ Chroma
+# Expone la clase Chroma como Vector Store moderno (sin warnings)
+langchain-chroma
+
+#########################################
+# Modelos LLM y Embeddings
+#########################################
+
+# SDK oficial de OpenAI.
+openai
+
+# Librería para embeddings y modelos locales
+# Permite usar modelos como MiniLM, MPNet o BGE sin depender de APIs externas
+sentence-transformers
+
+#########################################
+# Vector Database para RAG
+#########################################
+
+# Motor de base de datos vectorial Chroma
+# Almacena embeddings, metadatos y permite búsquedas semánticas
+# Es el backend real usado por langchain-chroma
+chromadb
+
+#########################################
+# Frontend / UI
+#########################################
+
+# Interfaz web para aplicaciones Python.
+streamlit
+
+# Componentes de chat estilo burbujas para Streamlit (opcional).
+streamlit-chat
+
+#########################################
+# Utilidades y helpers
+#########################################
+
+# Cargar variables de entorno desde archivos .env.
+python-dotenv
+
+# Pydantic v2 para validación de datos y modelos.
+pydantic
+
+# Cliente HTTP moderno (sync y async).
+httpx
+
+# Validador de correos electrónicos.
+email-validator
+
+#########################################
+# Procesamiento de PDFs
+#########################################
+
+# Librería moderna para leer y procesar archivos PDF
+# Es usada internamente por los loaders de PDF de LangChain
+# (por ejemplo PyPDFLoader y PyPDFDirectoryLoader)
+pypdf
+
+#########################################
+# Scraping Web
+#########################################
+
+# Cliente HTTP síncrono sencillo
+# Útil para descargar páginas web antes de procesarlas con loaders
+requests
+
+# Librería para parsear HTML y extraer contenido
+# Muy usada en web scraping y carga de documentos web
+beautifulsoup4
