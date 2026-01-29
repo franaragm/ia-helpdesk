@@ -1,9 +1,9 @@
-## 📌 El código completo
+## 📌 Código completo del pipeline RAG actual
 
 ```python
 rag_chain = (
     {
-        "context": retriever | _format_docs,
+        "context": retriever | format_context,
         "question": RunnablePassthrough(),
     }
     | rag_prompt
@@ -12,19 +12,19 @@ rag_chain = (
 )
 ```
 
-Esto **NO es magia**, es **composición de Runnables** en LangChain.
+Esto **NO es magia**, es **composición de Runnables (LCEL) en LangChain moderno**.
 
 ---
 
 ## 🧠 Idea clave antes de empezar
 
-En LangChain moderno:
+En tu implementación:
 
 * Todo es un **Runnable**
 * `|` significa:
   👉 *“la salida de la izquierda entra como input de la derecha”*
 
-Piensa en esto como una **tubería de datos**.
+Piensa en esto como una **tubería de datos**: la pregunta entra, los documentos se recuperan, se formatean, se pasa al prompt y finalmente el LLM devuelve texto.
 
 ---
 
@@ -32,96 +32,88 @@ Piensa en esto como una **tubería de datos**.
 
 ```python
 {
-    "context": retriever | _format_docs,
+    "context": retriever | format_context,
     "question": RunnablePassthrough(),
 }
 ```
 
-### ¿Qué es esto?
+### ¿Qué hace?
 
-👉 Es un **RunnableMap**
-Convierte **un solo input** (la pregunta) en **un diccionario estructurado**.
+👉 Es un **RunnableMap**: toma la entrada `query` y genera un diccionario:
+
+```python
+{
+  "question": "consulta del usuario",
+  "context": "texto de los documentos relevantes formateado"
+}
+```
 
 ---
 
 ### 🔹 `"question": RunnablePassthrough()`
 
-```python
-"question": RunnablePassthrough()
-```
-
-* Recibe el input original (la pregunta)
-* Lo devuelve **tal cual**
-* Sirve para pasar la pregunta al prompt
-
-Ejemplo:
+* Recibe la pregunta del usuario.
+* La pasa **tal cual** al prompt.
+* Ejemplo:
 
 ```python
-input = "¿Quién es el arrendatario?"
-output["question"] = "¿Quién es el arrendatario?"
+query = "¿Cómo puedo resetear mi contraseña?"
+output["question"] = "¿Cómo puedo resetear mi contraseña?"
 ```
+
+Sirve para que el prompt reciba la pregunta original.
 
 ---
 
-### 🔹 `"context": retriever | _format_docs`
+### 🔹 `"context": retriever | format_context`
 
 Aquí está la **magia RAG** 🔥
 
 #### Paso 1: `retriever`
 
 ```python
-retriever.invoke(question) -> List[Document]
+docs = retriever.invoke(query)  # List[Document]
 ```
 
-Devuelve algo así:
+Devuelve objetos `Document` con contenido y metadata:
 
 ```python
 [
-  Document(page_content="El arrendatario es Juan Pérez...", metadata={...}),
-  Document(page_content="Contrato firmado el 3 de mayo...", metadata={...})
+  Document(page_content="Para resetear tu contraseña ...", metadata={"filename":"manual.pdf"}),
+  Document(page_content="Sigue estos pasos ...", metadata={"filename":"faq.pdf"}),
 ]
 ```
 
----
+#### Paso 2: `| format_context`
 
-#### Paso 2: `| _format_docs`
+Convierte los `Document` en texto plano legible para el prompt, añade encabezados y fuentes:
 
-```python
-retriever | _format_docs
+```
+[Document 1] - Source: manual.pdf
+Para resetear tu contraseña ...
+
+[Document 2] - Source: faq.pdf
+Sigue estos pasos ...
 ```
 
-* Toma la lista de `Document`
-* Los convierte en **texto legible**
-* Añade fuentes, páginas, numeración
-
-Resultado final:
-
-```text
-[Fragmento 1] - Fuente: contrato1.pdf - Página: 2
-El arrendatario es Juan Pérez...
-
-[Fragmento 2] - Fuente: contrato2.pdf - Página: 1
-Contrato firmado el 3 de mayo...
-```
-
-👉 Eso se asigna a la clave `"context"`.
+Se asigna a `"context"` en el diccionario.
 
 ---
 
-### ✅ Resultado del bloque completo
+### ✅ Resultado del bloque inicial
 
 Si la pregunta es:
 
 ```
-"¿Quién es el arrendatario?"
+"¿Cómo puedo resetear mi contraseña?"
 ```
 
-El output de este bloque será:
+El output será:
 
 ```python
 {
-  "question": "¿Quién es el arrendatario?",
-  "context": "[Fragmento 1]...\n\n[Fragmento 2]..."
+  "question": "¿Cómo puedo resetear mi contraseña?",
+  "context": "[Document 1]...\n\n[Document 2]..."
 }
 ```
 
@@ -133,25 +125,16 @@ El output de este bloque será:
 | rag_prompt
 ```
 
-Tu prompt es:
+El prompt RAG espera:
 
-```text
-FRAGMENTOS DE CONTRATOS:
+```
+FRAGMENTOS DE SOPORTE:
 {context}
 
 PREGUNTA: {question}
 ```
 
-LangChain hace automáticamente:
-
-```python
-rag_prompt.format(
-    context=context,
-    question=question
-)
-```
-
-👉 Resultado: **un string listo para el LLM**.
+LangChain reemplaza automáticamente `{context}` y `{question}` y genera un **string listo para el LLM**.
 
 ---
 
@@ -161,32 +144,26 @@ rag_prompt.format(
 | llm_generation
 ```
 
-* Envía el prompt al modelo (OpenAI / Groq / etc.)
-* Devuelve la respuesta del LLM (objeto o mensaje)
+* Envía el prompt al modelo (OpenAI, etc.)
+* Devuelve la respuesta generada
 
 Ejemplo conceptual:
 
 ```python
-AIMessage(
-  content="El arrendatario es Juan Pérez..."
-)
+AIMessage(content="Para resetear tu contraseña, sigue estos pasos...")
 ```
 
 ---
 
 ## 🧩 4️⃣ `| StrOutputParser()`
 
-```python
-| StrOutputParser()
-```
-
-* Extrae solo el **texto plano**
-* Elimina metadata del mensaje
+* Extrae solo **texto plano**
+* Elimina metadata o envoltorios del LLM
 
 Resultado final:
 
 ```python
-"El arrendatario es Juan Pérez..."
+"Para resetear tu contraseña, sigue estos pasos..."
 ```
 
 ---
@@ -194,12 +171,12 @@ Resultado final:
 ## 🧠 Diagrama mental completo
 
 ```
-Pregunta
+Pregunta del usuario
    │
    ▼
 RunnableMap {
-  question ──────────────► "¿Quién es el arrendatario?"
-  context  ─► retriever ─► docs ─► _format_docs ─► texto
+  question ──────────────► "¿Cómo puedo resetear mi contraseña?"
+  context  ─► retriever ─► docs ─► format_context ─► texto
 }
    │
    ▼
@@ -217,157 +194,49 @@ Respuesta final (str)
 
 ---
 
-## 🧪 ¿Qué devuelve `rag_chain.invoke()`?
+## 🧪 ¿Qué devuelve `query_rag(query)`?
 
 ```python
-answer: str = rag_chain.invoke("¿Quién es el arrendatario?")
+answer_obj: RagAnswer = query_rag("¿Cómo puedo resetear mi contraseña?")
 ```
 
-👉 **Solo la respuesta**, no los documentos
-(por eso los recuperas aparte para la UI).
+`RagAnswer` incluye:
+
+* `answer` → texto final para mostrar al usuario
+* `confidence` → heurística de confiabilidad
+* `sources` → lista de archivos que respaldan la respuesta
+
+> Nota: **los documentos originales (`Document`) se recuperan por separado con `retriever.invoke(query)`** para mostrar fragmentos en la UI.
 
 ---
 
-## 🧠 Por qué esta arquitectura es MUY buena
+## 🧠 Por qué esta arquitectura es buena
 
 ✅ Separación clara:
 
-* retrieval
-* formatting
-* prompting
-* generation
+* retrieval (recuperar documentos)
+* formatting (contexto legible)
+* prompting (prompt RAG)
+* generation (LLM)
 
 ✅ Fácil de extender:
 
-* añadir reranking
-* añadir filtros
-* añadir explicaciones
+* reranking
+* filtros
+* explicaciones adicionales
 
-✅ 100% compatible con LangChain moderno
+✅ Transparente:
 
----
-
-
-
-## **una diferencia conceptual entre “recuperar documentos” y “generar respuesta” en RAG**.
-
-Vamos paso a paso:
+* `query_rag` da respuesta final
+* `retriever.invoke` da trazabilidad de documentos
 
 ---
 
-### 1️⃣ Lo que hace `rag_chain.invoke(question)`
+## 💡 Analogía
 
-En tu pipeline:
-
-```python
-rag_chain = (
-    {
-        "context": retriever | _format_docs,
-        "question": RunnablePassthrough(),
-    }
-    | rag_prompt
-    | llm_generation
-    | StrOutputParser()
-)
-```
-
-Cuando ejecutas:
-
-```python
-answer = rag_chain.invoke(question)
-```
-
-* **Internamente**, el pipeline hace:
-
-  1. `retriever.invoke(question)` → obtiene los documentos
-  2. `_format_docs` → los convierte en texto
-  3. Inserta ese texto en `rag_prompt`
-  4. Llama al LLM (`llm_generation`)
-  5. Extrae el texto final (`StrOutputParser`)
-
-✅ El resultado `answer` **ya incluye la información de los documentos**, pero **no tienes acceso a los objetos Document originales**.
-
----
-
-### 2️⃣ Por qué necesitas invocar el retriever por separado
-
-```python
-docs = retriever.invoke(question)
-```
-
-* Esto te da **los objetos `Document` reales**.
-* Incluyen metadata como:
-
-  * `source` (archivo)
-  * `page` (página)
-  * `chunk_id`
-* Que luego usas para mostrar los fragmentos en la UI o para **log/traceability**.
-
-Si solo usaras `rag_chain.invoke()`, **solo tendrías texto plano**, sin saber de dónde vino cada fragmento.
-
----
-
-### 3️⃣ Ejemplo conceptual
-
-Pregunta:
-
-```
-"¿Quién es el arrendatario?"
-```
-
-3a) `rag_chain.invoke(question)` → `answer`
-
-```
-"El arrendatario es Juan Pérez..."
-```
-
-* Útil para mostrar al usuario
-* No te dice **qué documento / página** respalda la respuesta
-
-3b) `retriever.invoke(question)` → `docs`
-
-```
-[
-  Document(page_content="El arrendatario es Juan Pérez", metadata={"source":"contrato1.pdf", "page":2}),
-  Document(page_content="Contrato firmado...", metadata={"source":"contrato2.pdf", "page":1})
-]
-```
-
-* Útil para mostrar **fragmentos**, referencias y auditoría
-* Te permite construir UI “fragmento por fragmento” (lo que haces en tu columna derecha)
-
----
-
-### 4️⃣ Por qué no se combinan directamente
-
-Podrías intentar:
-
-```python
-answer, docs = rag_chain.invoke_and_return_docs(question)
-```
-
-Pero **LangChain no tiene un método estándar así**.
-Separar **retrieval** y **generation** te da:
-
-* Flexibilidad
-* Mejor trazabilidad
-* Posibilidad de **re-ranking** o post-procesamiento antes de la generación
-
----
-
-### 5️⃣ Resumen conceptual
-
-| Acción                                      | Método                       | Resultado                   | Uso en tu app                |
-| ------------------------------------------- | ---------------------------- | --------------------------- | ---------------------------- |
-| Recuperar documentos relevantes             | `retriever.invoke(question)` | List[Document] con metadata | Mostrar fragmentos en UI     |
-| Generar respuesta basada en esos documentos | `rag_chain.invoke(question)` | str (texto de LLM)          | Mostrar respuesta al usuario |
-
----
-
-💡 **Analogía:**
-
-* `retriever` → biblioteca → te da los libros
-* `rag_chain` → abogado → lee los libros y te responde
-* Necesitas **los libros y la respuesta** para que todo sea transparente y auditable.
+* `retriever` → biblioteca: devuelve los libros relevantes
+* `format_context` → resumen legible de los libros
+* `rag_chain` → abogado: lee los libros, genera respuesta
+* `query_rag` → función que entrega **respuesta + confianza + fuentes** al usuario
 
 ---

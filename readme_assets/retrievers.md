@@ -1,215 +1,136 @@
-# 🧠 Idea central (antes del detalle)
+## 🧠 Idea central (antes del detalle)
 
 Tu sistema responde a esta pregunta implícita:
 
-> **“¿Cómo recupero los fragmentos más útiles, variados y robustos posibles para una pregunta legal?”**
+> **“¿Cómo recuperar fragmentos relevantes, variados y confiables para cualquier pregunta del usuario?”**
 
 La respuesta es:
 
-1. **Primero**: buscar fragmentos relevantes
-2. **Después**: evitar fragmentos redundantes
-3. **Después**: reformular la pregunta para no perder información
-4. **Opcionalmente**: combinar estrategias distintas
+1. **Primero**: recuperar fragmentos relevantes usando MMR
+2. **Después**: reformular la pregunta para no perder información (MultiQuery)
+3. **Después**: añadir búsqueda directa por similitud (Similarity Retriever)
+4. **Opcionalmente**: combinar resultados con pesos (EnsembleRetriever)
 
 Cada retriever resuelve **un problema distinto**.
 
 ---
 
-# 1️⃣ VectorStore Retriever (el más básico)
-
-```python
-vectorstore.as_retriever(search_type="similarity", k=SEARCH_K)
-```
-
-### Qué hace
-
-* Busca los `K` fragmentos **más parecidos semánticamente** a la pregunta.
-* Usa distancia de embeddings (coseno, L2, etc.).
-
-### Problema que tiene
-
-❌ Si hay muchos fragmentos parecidos:
-
-* Te devuelve **trozos casi idénticos**
-* Ignora otros aspectos relevantes
-
-Ejemplo:
-
-```
-Contrato A: “El arrendatario es Juan Pérez…”
-Contrato B: “El arrendatario es Juan Pérez…”
-Contrato C: “Duración del contrato: 12 meses…”
-```
-
-Si preguntas:
-
-> “¿Quién es el arrendatario?”
-
-Similarity puede devolver A y B → **redundancia**
-
----
-
-# 2️⃣ MMR Retriever (Maximal Marginal Relevance)
+## 1️⃣ MMR Retriever (base sólida)
 
 ```python
 base_retriever = vectorstore.as_retriever(
-    search_type="mmr",
-    k=SEARCH_K,
-    fetch_k=MMR_FETCH_K,
-    lambda_mult=MMR_DIVERSITY_LAMBDA,
+    search_type=SEARCH_TYPE,  # normalmente "mmr"
+    search_kwargs={
+        "k": SEARCH_K,
+        "lambda_mult": MMR_DIVERSITY_LAMBDA,
+        "fetch_k": MMR_FETCH_K,
+    },
 )
 ```
 
 ### Qué hace
 
-MMR responde a:
+* Recupera fragmentos relevantes de manera **diversa**
+* Evita fragmentos **muy similares entre sí**
+* `fetch_k` → candidatos iniciales
+* `k` → fragmentos finales
+* `lambda_mult` → equilibrio relevancia/diversidad
 
-> “Dame fragmentos relevantes, pero **no repetidos**”
+### Problema que resuelve
 
-### Cómo funciona
-
-1. Busca `fetch_k` candidatos relevantes
-2. Selecciona `k` fragmentos:
-
-   * relevantes **y**
-   * diferentes entre sí
-
-### Resultado
-
-* Menos redundancia
-* Más cobertura de información
-
-💡 **Por eso este es tu “base_retriever”**
-Es una **mejora directa** sobre similarity.
+❌ Con solo similarity, podrías obtener muchos fragmentos casi idénticos, ignorando información complementaria.
 
 ---
 
-# 3️⃣ MultiQueryRetriever (el salto de calidad)
+## 2️⃣ Similarity Retriever (búsqueda directa)
+
+```python
+similarity_retriever = vectorstore.as_retriever(
+    search_type="similarity",
+    search_kwargs={"k": SEARCH_K},
+)
+```
+
+### Qué hace
+
+* Encuentra coincidencias exactas o muy cercanas a la pregunta
+* Actúa como **complemento preciso** al enfoque exploratorio de MMR
+
+### Por qué se conserva
+
+Porque a veces la pregunta está perfectamente formulada y similarity devuelve **exactamente lo que necesitas**.
+
+---
+
+## 3️⃣ MultiQuery Retriever (reformulación inteligente)
 
 ```python
 mmr_multi_retriever = MultiQueryRetriever.from_llm(
     retriever=base_retriever,
     llm=llm_queries,
+    prompt=multiquery_prompt,
 )
 ```
 
 ### Problema que resuelve
 
-Las personas preguntan **mal** o **de forma parcial**.
+Las preguntas de los usuarios pueden ser:
 
-Ejemplo:
+* Mal formuladas
+* Parciales o ambiguas
 
-> “¿Quién vive en el piso?”
+MultiQuery:
 
-Pero el contrato dice:
+1. Genera múltiples **variantes de la pregunta** con un LLM
+2. Ejecuta MMR para cada variante
+3. Une los resultados y elimina duplicados
 
-* arrendatario
-* inquilino
-* parte arrendataria
-
-### Qué hace MultiQuery
-
-1. Usa un LLM para generar **3 versiones alternativas** de la pregunta
-2. Ejecuta el retriever (MMR) **para cada versión**
-3. Une y deduplica los resultados
-
-Ejemplo:
-
-```
-Original: ¿Quién vive en el piso?
-Variantes:
-- ¿Quién es el arrendatario del inmueble?
-- ¿Quién figura como inquilino en el contrato?
-- ¿Qué persona ocupa la vivienda?
-```
-
-👉 Esto **multiplica la capacidad de recall** (no perder info).
+> Esto **aumenta el recall** sin perder información importante.
 
 ---
 
-### Por qué MultiQuery usa MMR y no similarity
+### Por qué MultiQuery se basa en MMR y no en similarity
 
-Porque:
-
-* Ya estás ejecutando **varias búsquedas**
-* Sin MMR, tendrías **muchísima redundancia**
-* MMR filtra mejor cada búsqueda
+* Ejecutar varias búsquedas con similarity produciría **demasiada redundancia**
+* MMR filtra cada búsqueda y asegura diversidad
 
 📌 **MMR = base sólida**
 📌 **MultiQuery = expansión inteligente**
 
 ---
 
-# 4️⃣ Similarity Retriever (por qué sigue existiendo)
-
-```python
-similarity_retriever = vectorstore.as_retriever(
-    search_type="similarity",
-    k=SEARCH_K,
-)
-```
-
-### ¿No era malo similarity?
-
-No. Es:
-
-* Muy preciso
-* Muy directo
-* Muy rápido
-
-Pero:
-
-* Puede ser demasiado estrecho
-
-### Por qué lo conservas
-
-Porque a veces:
-
-* La pregunta está **perfectamente formulada**
-* Similarity devuelve el fragmento exacto
-* MultiQuery + MMR puede “diluir” eso
-
----
-
-# 5️⃣ EnsembleRetriever (la combinación final)
+## 4️⃣ Ensemble Retriever (combinación final)
 
 ```python
 EnsembleRetriever(
     retrievers=[mmr_multi_retriever, similarity_retriever],
     weights=[0.7, 0.3],
+    similarity_threshold=SIMILARITY_THRESHOLD,
 )
 ```
 
 ### Qué hace
 
-Combina resultados de **distintas estrategias**.
+Combina estrategias:
 
-Piénsalo así:
-
-| Estrategia       | Rol                    |
-| ---------------- | ---------------------- |
-| MultiQuery + MMR | Explorador inteligente |
-| Similarity       | Francotirador preciso  |
+| Estrategia       | Rol                     |
+| ---------------- | ----------------------- |
+| MultiQuery + MMR | Exploración inteligente |
+| Similarity       | Francotirador preciso   |
 
 ### Pesos
-
-```python
-weights=[0.7, 0.3]
-```
 
 * 70% confianza en exploración semántica
 * 30% confianza en match directo
 
-### similarity_threshold
-
-Evita meter basura irrelevante.
+`similarity_threshold` evita resultados irrelevantes.
 
 ---
 
-# 6️⃣ Diagrama mental completo
+## 5️⃣ Diagrama mental completo
 
 ```
-Pregunta
+Pregunta del usuario
   │
   ├─ Similarity ───────────────┐
   │                             ├─ Ensemble ─► docs finales
@@ -221,7 +142,7 @@ Pregunta
 
 ---
 
-# 7️⃣ Resumen ultra claro
+## 6️⃣ Resumen ultra claro
 
 | Componente          | Por qué existe                          |
 | ------------------- | --------------------------------------- |
@@ -232,7 +153,7 @@ Pregunta
 
 ---
 
-# 8️⃣ Si quisieras simplificar (opcional)
+## 7️⃣ Si quisieras simplificar (opcional)
 
 ### Nivel básico
 
@@ -240,7 +161,7 @@ Pregunta
 retriever = vectorstore.as_retriever(search_type="similarity", k=3)
 ```
 
-### Nivel intermedio (recomendado)
+### Nivel intermedio
 
 ```python
 retriever = MultiQueryRetriever.from_llm(
@@ -251,14 +172,16 @@ retriever = MultiQueryRetriever.from_llm(
 
 ### Nivel avanzado (tu caso actual)
 
-✔ Exactamente lo que tienes
+✔ MultiQuery + MMR + (opcional) Similarity + Ensemble
 
 ---
 
 ## 🏁 Conclusión
 
-No es un lío, es una **estrategia en capas**:
+No es complejo, es **una estrategia en capas**:
 
-> **Explorar bien → no repetir → no depender de una sola forma de preguntar → combinar enfoques**
+> **Explorar bien → no repetir → no depender de una sola formulación → combinar enfoques**
 
-Esto es **arquitectura RAG madura**.
+Esto es **arquitectura RAG robusta y tolerante a preguntas mal formuladas**.
+
+---

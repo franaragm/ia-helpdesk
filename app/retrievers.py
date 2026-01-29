@@ -1,21 +1,21 @@
+import logging
 from langchain_classic.retrievers import EnsembleRetriever, MultiQueryRetriever
 from langchain_core.retrievers import BaseRetriever
-
-# Configuración global del sistema RAG
-from config_base import (
-    SEARCH_TYPE,              # Tipo de búsqueda base (ej: "mmr")
-    SEARCH_K,                 # Número final de fragmentos a recuperar
-    ENABLE_HYBRID_SEARCH,     # Activa combinación de estrategias de búsqueda
-    SIMILARITY_THRESHOLD,     # Umbral mínimo de similitud en modo híbrido
-    MMR_DIVERSITY_LAMBDA,     # Controla balance relevancia vs diversidad en MMR
-    MMR_FETCH_K,              # Número de candidatos iniciales para MMR
-    QUERY_MODEL,              # Modelo LLM usado para generar consultas alternativas
-)
-
-from .vectorstore import get_vectorstore
+from config_base import *
 from .services.llm_client import llm_chain_openai
-from .prompts import multi_query_prompt
+from .vectorstore import get_vectorstore
+from .prompts import multiquery_prompt
 import streamlit as st
+
+def setup_logging(debug: bool = False):
+    """Configura el logging para el retriever MultiQuery."""
+    logging.basicConfig(
+        level=logging.INFO if debug else logging.WARNING,
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
+    logging.getLogger("langchain.retrievers.multi_query").setLevel(
+        logging.INFO if debug else logging.WARNING
+    )
 
 @st.cache_resource
 def build_retriever() -> BaseRetriever:
@@ -30,17 +30,17 @@ def build_retriever() -> BaseRetriever:
     El resultado es un retriever robusto, equilibrado y tolerante
     a preguntas mal formuladas o incompletas.
     """
-
+    
     # === Acceso al vectorstore persistido (ChromaDB) ===
     vectorstore = get_vectorstore()
-
+    
     # === LLM dedicado EXCLUSIVAMENTE a generar variantes de la consulta ===
     # No se usa para responder, solo para reformular preguntas
     llm_queries = llm_chain_openai(
         model=QUERY_MODEL,
         temperature=0,  # determinista: mismas queries para misma pregunta
     )
-
+    
     # ======================================================
     # 1) RETRIEVER BASE: MMR (Maximal Marginal Relevance)
     # ------------------------------------------------------
@@ -88,7 +88,7 @@ def build_retriever() -> BaseRetriever:
     mmr_multi_retriever = MultiQueryRetriever.from_llm(
         retriever=base_retriever,   # MMR como base sólida
         llm=llm_queries,            # LLM para generar variantes
-        prompt=multi_query_prompt, # Prompt legal especializado
+        prompt=multiquery_prompt,   # Prompt personalizado
     )
 
     # ======================================================

@@ -1,157 +1,229 @@
 from typing import List
+import streamlit as st
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-
-# Cliente LLM para generación de respuestas
+from langchain_core.documents import Document
+from config_base import GENERATION_MODEL, SEARCH_K
 from .services.llm_client import llm_chain_openai
-
-# Configuración global del sistema
-from config_base import (
-    GENERATION_MODEL,       # Modelo LLM usado para generar la respuesta final
-    SEARCH_K,               # Nº máximo de fragmentos que se muestran en la UI
-    ENABLE_HYBRID_SEARCH,   # Indica si el retriever es híbrido
-    SIMILARITY_THRESHOLD,   # Umbral de similitud (solo informativo para la UI)
-)
-
-# Retriever ya construido (MMR + MultiQuery + opcional Hybrid)
 from .retrievers import build_retriever
-
-# Prompt principal RAG (contexto + pregunta → respuesta)
 from .prompts import rag_prompt
-
-# Modelos Pydantic para respuestas estructuradas
-from .schemas import RetrievedDocument, RagResponse
-
-# streamlit para caching
-import streamlit as st
-
+from .schemas import RagAnswer
 
 # ======================================================
-# FORMATEO DE DOCUMENTOS PARA EL PROMPT RAG
-# ------------------------------------------------------
-# Convierte documentos recuperados en texto legible
-# para el LLM, añadiendo:
-# - Número de fragmento
-# - Fuente (PDF)
-# - Página
+# Funciones auxiliares (NO usan LLM)
 # ======================================================
-def _format_docs(docs) -> str:
-    """Formatea los documentos recuperados para el prompt RAG."""
-    formatted = []
 
-    for i, doc in enumerate(docs, 1):
-        # Cabecera del fragmento
-        header = f"[Fragmento {i}]"
+def format_context(docs: List[Document]) -> str:
+    """
+    Convierte los documentos recuperados por el retriever
+    en un bloque de texto limpio y legible para el prompt RAG.
 
-        # Metadatos opcionales (fuente y página)
-        if doc.metadata:
-            if "source" in doc.metadata:
-                source = doc.metadata["source"].split("\\")[-1]
-                header += f" - Fuente: {source}"
-            if "page" in doc.metadata:
-                header += f" - Página: {doc.metadata['page']}"
+    Responsabilidades:
+    - Limitar el número de documentos usados (SEARCH_K)
+    - Ignorar fragmentos vacíos
+    - Añadir encabezados y fuente para trazabilidad
+    - Devolver un único string listo para el prompt
+    """
+    parts = []
 
-        # Contenido del fragmento
+    for i, doc in enumerate(docs[:SEARCH_K], 1):
         content = doc.page_content.strip()
-        formatted.append(f"{header}\n{content}")
 
-    # Separación clara entre fragmentos
-    return "\n\n".join(formatted)
+        # Ignorar documentos sin contenido útil
+        if not content:
+            continue
+
+        # Encabezado del fragmento
+        header = f"[Document {i}]"
+
+        # Fuente opcional (filename)
+        filename = doc.metadata.get("filename")
+        if filename:
+            header += f" - Source: {filename}"
+
+        parts.append(f"{header}\n{content}")
+
+    # El prompt RAG recibirá este texto como {contexto}
+    return "\n\n".join(parts)
+
+
+def compute_confidence(query: str, docs: List[Document]) -> float:
+    """
+    Calcula un nivel de confianza heurístico (NO basado en LLM).
+
+    La confianza se construye combinando tres señales simples:
+    1) Coincidencia de palabras clave entre la consulta y los documentos
+    2) Número de documentos recuperados
+    3) Cantidad total de texto disponible como contexto
+
+    El objetivo NO es precisión matemática,
+    sino dar una estimación razonable y estable para la UI.
+    """
+
+    # Sin documentos → confianza mínima
+    if not docs:
+        return 0.0
+
+    # Extraer palabras clave de la consulta
+    # (se ignoran palabras muy cortas)
+    keywords = {w for w in query.lower().split() if len(w) > 2}
+
+    # Si no hay keywords claras, devolver un valor base neutro
+    if not keywords:
+        return 0.3
+
+    keyword_matches = 0
+    total_words = 0
+
+    # Analizamos solo los primeros documentos (los más relevantes)
+    for doc in docs[:3]:
+        content = doc.page_content.lower()
+        words = content.split()
+
+        total_words += len(words)
+
+        # Contar cuántas keywords aparecen en el contenido
+        keyword_matches += sum(1 for k in keywords if k in content)
+
+    # --- Cálculo de la puntuación ---
+
+    # Base: proporción de keywords encontradas (máx 1.0)
+    base_score = min(keyword_matches / len(keywords), 1.0)
+
+    # Bonus por número de documentos (máx +0.2)
+    docs_bonus = min(len(docs) / 4.0, 0.2)
+
+    # Bonus por tamaño del contexto (máx +0.1)
+    length_bonus = min(total_words / 1000.0, 0.1)
+
+    # Resultado final limitado a 1.0
+    confidence = base_score + docs_bonus + length_bonus
+
+    return round(min(confidence, 1.0), 2)
+
+
+def extract_sources(docs: List[Document]) -> List[str]:
+    """
+    Extrae una lista de fuentes únicas (filename)
+    a partir de los documentos recuperados.
+
+    Se usa para:
+    - Mostrar trazabilidad en la UI
+    - Dar transparencia al usuario
+    """
+    sources = []
+
+    for doc in docs[:SEARCH_K]:
+        filename = doc.metadata.get("filename")
+        if filename and filename not in sources:
+            sources.append(filename)
+
+    return sources
 
 
 # ======================================================
-# CONSTRUCCIÓN DEL PIPELINE RAG
-# ------------------------------------------------------
-# Flujo:
-# Pregunta del usuario
-#   → Retriever (MMR + MultiQuery + Hybrid)
-#   → Formateo de contexto
-#   → Prompt RAG
-#   → LLM generador
-#   → Texto final
+# Construcción del pipeline RAG (LCEL)
 # ======================================================
+
 @st.cache_resource
 def build_rag_chain():
-    """Construye el pipeline RAG completo."""
-    
-    # Retriever avanzado (configurado en otro módulo)
+    """
+    Construye el pipeline RAG completo usando LCEL.
+
+    Flujo declarativo:
+    Pregunta del usuario
+      → Retriever (MMR + MultiQuery + opcional híbrido)
+      → Formateo del contexto
+      → Prompt RAG
+      → LLM generador
+      → Texto plano como salida
+    """
+
+    # Retriever avanzado (vectorstore + estrategias)
     retriever = build_retriever()
 
-    # LLM dedicado EXCLUSIVAMENTE a generar la respuesta final
+    # LLM usado SOLO para generar la respuesta final
     llm_generation = llm_chain_openai(
         model=GENERATION_MODEL,
-        temperature=0,  # respuestas consistentes y deterministas
+        temperature=0,  # respuestas deterministas
     )
 
-    # Definición declarativa del pipeline RAG
+    # Pipeline LCEL
     rag_chain = (
         {
-            # El retriever recibe la pregunta y produce el contexto
-            "context": retriever | _format_docs,
+            # El retriever recibe la consulta y produce contexto
+            "context": retriever | format_context,
 
-            # La pregunta pasa directamente al prompt
+            # La consulta pasa directamente al prompt
             "question": RunnablePassthrough(),
         }
-        | rag_prompt          # Inserta contexto + pregunta en el prompt
-        | llm_generation      # Genera la respuesta
-        | StrOutputParser()   # Devuelve solo texto plano
+        | rag_prompt
+        | llm_generation
+        | StrOutputParser()
     )
 
     return rag_chain, retriever
 
 
 # ======================================================
-# EJECUCIÓN DE UNA CONSULTA RAG
-# ------------------------------------------------------
-# Devuelve:
-# - Respuesta generada por el LLM
-# - Fragmentos usados como soporte (para UI / trazabilidad)
+# API pública del módulo RAG
 # ======================================================
-def query_rag(question: str) -> RagResponse:
-    """Ejecuta una consulta RAG y devuelve respuesta + documentos relevantes."""
 
+def query_rag(query: str) -> RagAnswer:
+    """
+    Ejecuta una consulta RAG completa y devuelve un objeto Pydantic RagAnswer.
+
+    Flujo:
+    1) Recupera documentos relevantes con el retriever (MMR + MultiQuery ± Hybrid)
+    2) Formatea el contexto para el prompt RAG
+    3) Genera la respuesta con el LLM
+    4) Calcula confianza y extrae fuentes
+    5) Devuelve un RagAnswer con toda la información
+
+    Casos especiales manejados:
+    - Sin documentos encontrados → respuesta de error con baja confianza
+    - Documentos sin contenido útil → mensaje de advertencia con confianza intermedia
+    """
+    
     # Construir pipeline y retriever
     rag_chain, retriever = build_rag_chain()
 
-    # 1) Generar respuesta usando el pipeline completo
-    answer = rag_chain.invoke(question)
+    # Recuperar documentos (también se usan para scoring y fuentes)
+    docs: List[Document] = retriever.invoke(query)
 
-    # 2) Recuperar documentos para mostrarlos en la interfaz
-    # (se hace por separado para control y transparencia)
-    docs = retriever.invoke(question)
-
-    # Convertir documentos LangChain → modelos Pydantic
-    documents: List[RetrievedDocument] = []
-    for i, doc in enumerate(docs[:SEARCH_K], 1):
-        documents.append(
-            RetrievedDocument(
-                fragmento=i,
-                contenido=(
-                    doc.page_content[:1000] + "..."
-                    if len(doc.page_content) > 1000
-                    else doc.page_content
-                ),
-                fuente=doc.metadata.get("source", "No especificada").split("\\")[-1],
-                pagina=doc.metadata.get("page"),
-            )
+    # ==========================================
+    # Caso 1: No se recuperó ningún documento
+    # ==========================================
+    if not docs:
+        return RagAnswer(
+            answer="No se encontró información relevante en la base de conocimiento.",
+            confidence=0.1,
+            sources=[],
         )
 
-    # Respuesta final estructurada
-    return RagResponse(
+    # Formatear contexto y extraer fuentes
+    context = format_context(docs)
+    sources = extract_sources(docs)
+
+    # ==========================================
+    # Caso 2: Documentos existen pero sin contenido útil
+    # ==========================================
+    if not context.strip():
+        return RagAnswer(
+            answer="Se encontraron documentos, pero no contienen información útil.",
+            confidence=0.2,
+            sources=sources,
+        )
+
+    # ==========================================
+    # Caso normal: ejecutar pipeline RAG
+    # ==========================================
+    answer = rag_chain.invoke(query)
+    confidence = compute_confidence(query, docs)
+
+    # Devolver respuesta tipada
+    return RagAnswer(
         answer=answer,
-        documents=documents,
+        confidence=confidence,
+        sources=sources,
     )
-
-
-# ======================================================
-# INFORMACIÓN DEL RETRIEVER PARA LA UI
-# ------------------------------------------------------
-# Se usa solo para mostrar configuración activa al usuario
-# ======================================================
-def get_retriever_info() -> dict:
-    """Devuelve información del retriever para la UI."""
-    return {
-        "tipo": "MMR + MultiQuery" + (" + Hybrid" if ENABLE_HYBRID_SEARCH else ""),
-        "documentos": SEARCH_K,
-        "umbral": SIMILARITY_THRESHOLD if ENABLE_HYBRID_SEARCH else "N/A",
-    }

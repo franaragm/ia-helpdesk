@@ -1,36 +1,12 @@
 from langchain_core.prompts import PromptTemplate
 
-# Prompt principal para el sistema RAG
-rag_prompt = PromptTemplate.from_template("""
-Eres un asistente legal especializado en contratos de arrendamiento.
-Basándote ÚNICAMENTE en los siguientes fragmentos de contratos, responde a la pregunta del usuario.
+multiquery_prompt = PromptTemplate.from_template("""
+Eres un asistente de helpdesk experto. Tu tarea es generar múltiples versiones de la consulta del usuario para recuperar documentos relevantes de una base de conocimiento de soporte técnico.
 
-FRAGMENTOS DE CONTRATOS:
-{context}
-
-PREGUNTA: {question}
-
-INSTRUCCIONES:
-- Proporciona una respuesta clara y directa basada en la información disponible
-- Si encuentras la información exacta, cítala textualmente cuando sea relevante
-- Incluye todos los detalles importantes: nombres, direcciones, importes, fechas
-- Si la información está incompleta o no está disponible, indícalo claramente
-- Organiza la información de manera estructurada si es necesaria
-- Si hay múltiples contratos o personas mencionadas, especifica a cuál te refieres
-
-RESPUESTA:
-""")
-
-# Prompt personalizado para el MultiQueryRetriever
-multi_query_prompt = PromptTemplate.from_template("""
-Eres un experto en análisis de documentos legales especializados en contratos de arrendamiento.
-Tu tarea es generar múltiples versiones de la consulta del usuario para recuperar documentos relevantes desde una base de datos vectorial.
-
-Al generar variaciones de la consulta, considera:
-- Diferentes formas de referirse a personas (nombre completo, apellidos, solo nombre)
-- Sinónimos legales y términos técnicos de arrendamiento
-- Variaciones en la formulación de preguntas sobre aspectos contractuales
-- Términos relacionados con ubicaciones, propiedades y condiciones del contrato
+Genera 3 versiones diferentes de la consulta original, considerando:
+- Sinónimos técnicos
+- Diferentes formas de expresar el mismo problema
+- Variaciones en terminología de helpdesk
 
 Consulta original: {question}
 
@@ -38,3 +14,40 @@ Genera exactamente 3 versiones alternativas de esta consulta, una por línea, si
 """)
 
 
+rag_prompt = PromptTemplate.from_template("""
+Eres un asistente de helpdesk experto. Responde a la consulta del usuario basándote únicamente en el contexto proporcionado de la base de conocimiento.
+
+Instrucciones:
+- Proporciona una respuesta clara, directa y útil
+- Si el contexto no contiene información suficiente, dilo claramente
+- Mantén un tono profesional pero amigable
+- No inventes información que no esté en el contexto
+
+Contexto de la base de conocimiento:
+{context}
+
+Consulta del usuario: {question}
+
+Respuesta:
+""")
+
+classification_prompt = PromptTemplate.from_template("""
+Analiza esta consulta de helpdesk y decide si puede resolverse automáticamente o si debe escalarse a un agente humano.
+
+CONSULTA:
+{question}
+
+CONTEXTO OBTENIDO DEL RAG:
+{context}
+
+CONFIANZA DEL RAG:
+{confidence}
+
+Criterios:
+- AUTOMATIC: información suficiente, confianza > 0.6, problema estándar
+- ESCALATED: información incompleta, confianza baja o caso complejo
+
+Responde SOLO con:
+automatic | escalated
+y una breve justificación (máx 20 palabras).
+""")

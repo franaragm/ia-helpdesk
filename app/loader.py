@@ -1,66 +1,75 @@
 import streamlit as st
-from pathlib import Path
 from typing import List
-from langchain_core.documents import Document
-from langchain_community.document_loaders import PyPDFDirectoryLoader, PyPDFLoader
+from pathlib import Path
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from tempfile import NamedTemporaryFile
-from .vectorstore import create_vectorstore
-from config_base import ROOT_DIR
+from langchain_core.documents import Document
+from app.services.utils import hash_text
+from config_base import DOCUMENTS_DIR
 
-DOCUMENTS_DIR = ROOT_DIR / "app" / "documents"
+# ===============================
+# helpers privados
+# ===============================
 
 @st.cache_resource
 def _get_text_splitter() -> RecursiveCharacterTextSplitter:
     """Splitter único y cacheado para todo el sistema (consistencia total)."""
     return RecursiveCharacterTextSplitter(
-        chunk_size=5000,
-        chunk_overlap=1000,
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len,
+        separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
     )
 
-def load_documents(directory: Path = DOCUMENTS_DIR) -> List[Document]:
+def _get_doc_type(filename: str) -> str:
+    """Determina el tipo de documento basado en el nombre."""
+    if "faq" in filename.lower():
+        return "faq"
+    elif "manual" in filename.lower():
+        return "manual"
+    elif "troubleshooting" in filename.lower():
+        return "troubleshooting"
+    else:
+        return "general"
+    
+
+# ===============================
+# funciones públicas
+# ===============================
+
+def load_documents() -> List[Document]:
     """
-    Carga PDFs de un directorio y los divide en chunks.
-    Usado para bootstrap inicial.
+    Carga documentos markdown del directorio de documentos,
+    enriquece metadatos de cada documento, y los divide en chunks.
+    returns: Lista de chunks (Document).
     """
-    loader = PyPDFDirectoryLoader(str(directory))
+    print(f"📚 Cargando documentos desde {DOCUMENTS_DIR}")
+
+    loader = DirectoryLoader(
+        str(DOCUMENTS_DIR),
+        glob="*.md",
+        loader_cls=TextLoader,
+        loader_kwargs={"encoding": "utf-8"}
+    )
+
     documents = loader.load()
-    print(f"Se cargaron {len(documents)} documentos desde {directory}")
 
+    # Enriquecer metadatos para cada documento
+    for doc in documents:
+        filename = Path(doc.metadata["source"]).stem
+        doc.metadata.update({
+            "filename": filename,
+            "doc_type": _get_doc_type(filename),
+            "doc_id": hash_text(doc.page_content)
+        })
+
+    print(f"✅ Cargados {len(documents)} documentos desde {DOCUMENTS_DIR}")
+    
+    print("✂️  Dividiendo documentos en chunks...")
+    
     splitter = _get_text_splitter()
-    docs_split = splitter.split_documents(documents)
-
-    print(f"🧠 Se crearon {len(docs_split)} chunks de texto")
-    return docs_split
-
-def _load_single_pdf(path: Path, source_name: str) -> List[Document]:
-    """
-    Carga un único PDF (upload) y lo divide en chunks.
-    """
-    loader = PyPDFLoader(str(path))
-    documents = loader.load()
-
-    splitter = _get_text_splitter()
-    docs_split = splitter.split_documents(documents)
-
-    # Metadata consistente para trazabilidad
-    for doc in docs_split:
-        doc.metadata["source"] = source_name
-
-    print(f"📄 PDF '{source_name}' indexado ({len(docs_split)} chunks)")
-    return docs_split
-
-def index_uploaded_pdf(uploaded_file) -> int:
-    """
-    Indexa incrementalmente un PDF subido por el usuario.
-    """
-
-    with NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = Path(tmp.name)
-
-    docs = _load_single_pdf(tmp_path, uploaded_file.name)
-
-    create_vectorstore(docs)
-
-    return len(docs)
+    chunks = splitter.split_documents(documents)
+    
+    print(f"✅ Creados {len(chunks)} chunks")
+    
+    return chunks
