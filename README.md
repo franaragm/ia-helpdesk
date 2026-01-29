@@ -16,6 +16,7 @@ Está diseñado con una arquitectura modular y extensible, pensado para **casos 
 
 ![screenshot](readme_assets/screenshot.png)
 
+![screenshot](readme_assets/screenshot-2.png)
 ---
 
 ## 🐍 Requisitos de Python

@@ -27,14 +27,13 @@ def run_rag(state: HelpdeskState) -> Dict:
         "rag_answer": result["answer"],
         "confidence": result["confidence"],
         "sources": result["sources"],
-        "rag_context": result["answer"],
+        "rag_context": result.get("rag_context", result["answer"]),
         "history": [
             "RAG ejecutado con MultiQuery + MMR",
-            f"Confianza obtenida: {result['confidence']}",
+            f"Confianza heurística obtenida: {result['confidence']}",
             f"Fuentes consultadas: {len(result['sources'])}",
         ],
     }
-
 
 # ======================================================
 # NODO 2: CLASIFICAR (AUTOMÁTICO VS ESCALADO)
@@ -82,12 +81,14 @@ def classify_with_context(state: HelpdeskState) -> Dict:
 # NODO 3: PREPARAR ESCALADO
 # ======================================================
 
-def prepare_escalation(_: HelpdeskState) -> Dict:
+def prepare_escalation(state: HelpdeskState) -> Dict:
     """
     Marca el estado como pendiente de intervención humana.
+    Inicializa human_answer vacío para que LangGraph no rompa.
     """
     return {
         "requires_human": True,
+        "human_answer": None,
         "history": ["Consulta escalada a agente humano."],
     }
 
@@ -148,13 +149,6 @@ def route_after_classification(state: HelpdeskState) -> str:
     return "final_answer" if state["category"] == "automatic" else "escalation"
 
 
-def route_after_escalation(state: HelpdeskState) -> str:
-    """
-    Decide si continuar o pausar esperando al humano.
-    """
-    return "process_human" if state.get("human_answer") else END
-
-
 # ======================================================
 # CREACIÓN Y COMPILACIÓN DEL GRAFO
 # ======================================================
@@ -184,14 +178,7 @@ def build_helpdesk_graph():
         },
     )
 
-    graph.add_conditional_edges(
-        "escalation",
-        route_after_escalation,
-        {
-            "process_human": "process_human",
-        },
-    )
-
+    graph.add_edge("escalation", "process_human")
     graph.add_edge("process_human", END)
     graph.add_edge("final_answer", END)
 

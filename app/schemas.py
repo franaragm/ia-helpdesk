@@ -3,35 +3,8 @@ from operator import add
 from pydantic import BaseModel, Field
 
 # ======================================================
-# ESQUEMAS Pydantic para VALIDACIÓN DE DATOS
+# ESQUEMA Pydantic para VALIDACIÓN DE DATOS DEL GRAFO
 # ======================================================
-
-class RagAnswer(BaseModel):
-    """
-    Respuesta estructurada del sistema RAG.
-
-    Se usa como contrato entre:
-    - Capa RAG
-    - UI (Streamlit)
-    - Futuras APIs (FastAPI, etc.)
-    """
-
-    answer: str = Field(
-        ...,
-        description="Respuesta generada por el LLM a partir del contexto recuperado"
-    )
-
-    confidence: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description="Nivel de confianza heurístico de la respuesta (0.0 - 1.0)"
-    )
-
-    sources: List[str] = Field(
-        default_factory=list,
-        description="Lista de fuentes (filenames) utilizadas como soporte"
-    )
     
 class HelpdeskStateModel(BaseModel):
     """

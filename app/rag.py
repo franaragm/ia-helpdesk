@@ -7,7 +7,6 @@ from config_base import GENERATION_MODEL, SEARCH_K
 from .services.llm_client import llm_chain_openai
 from .retrievers import build_retriever
 from .prompts import rag_prompt
-from .schemas import RagAnswer
 
 # ======================================================
 # Funciones auxiliares (NO usan LLM)
@@ -47,59 +46,30 @@ def format_context(docs: List[Document]) -> str:
     return "\n\n".join(parts)
 
 
-def compute_confidence(query: str, docs: List[Document]) -> float:
+def compute_confidence(rag_answer: str | None, docs: List[Document]) -> float:
     """
-    Calcula un nivel de confianza heurístico (NO basado en LLM).
-
-    La confianza se construye combinando tres señales simples:
-    1) Coincidencia de palabras clave entre la consulta y los documentos
-    2) Número de documentos recuperados
-    3) Cantidad total de texto disponible como contexto
-
-    El objetivo NO es precisión matemática,
-    sino dar una estimación razonable y estable para la UI.
+    Calcula una confianza heurística simple basada en:
+    - Si hay documentos
+    - Si RAG sugiere que no puede responder
+    Devuelve un número entre 0 y 1.
     """
 
-    # Sin documentos → confianza mínima
     if not docs:
-        return 0.0
+        return 0.0  # sin documentos, confianza mínima
 
-    # Extraer palabras clave de la consulta
-    # (se ignoran palabras muy cortas)
-    keywords = {w for w in query.lower().split() if len(w) > 2}
+    if not rag_answer:
+        return 0.2  # documentos pero RAG no generó respuesta
 
-    # Si no hay keywords claras, devolver un valor base neutro
-    if not keywords:
-        return 0.3
+    answer_lower = rag_answer.lower()
 
-    keyword_matches = 0
-    total_words = 0
+    # Penalización si RAG indica no saber / no hay información
+    if "no contiene información" in answer_lower or \
+       "no se encontró información" in answer_lower or \
+       "no incluye información" in answer_lower:
+        return 0.3  # confianza baja
 
-    # Analizamos solo los primeros documentos (los más relevantes)
-    for doc in docs[:3]:
-        content = doc.page_content.lower()
-        words = content.split()
-
-        total_words += len(words)
-
-        # Contar cuántas keywords aparecen en el contenido
-        keyword_matches += sum(1 for k in keywords if k in content)
-
-    # --- Cálculo de la puntuación ---
-
-    # Base: proporción de keywords encontradas (máx 1.0)
-    base_score = min(keyword_matches / len(keywords), 1.0)
-
-    # Bonus por número de documentos (máx +0.2)
-    docs_bonus = min(len(docs) / 4.0, 0.2)
-
-    # Bonus por tamaño del contexto (máx +0.1)
-    length_bonus = min(total_words / 1000.0, 0.1)
-
-    # Resultado final limitado a 1.0
-    confidence = base_score + docs_bonus + length_bonus
-
-    return round(min(confidence, 1.0), 2)
+    # Si RAG genera algo, confianza moderada-alta
+    return 0.6  # valor base para respuestas RAG
 
 
 def extract_sources(docs: List[Document]) -> List[str]:
@@ -169,16 +139,16 @@ def build_rag_chain():
 # API pública del módulo RAG
 # ======================================================
 
-def query_rag(query: str) -> RagAnswer:
+def query_rag(query: str) -> dict:
     """
-    Ejecuta una consulta RAG completa y devuelve un objeto Pydantic RagAnswer.
+    Ejecuta una consulta RAG completa y devuelve un objeto dict con toda la información.
 
     Flujo:
     1) Recupera documentos relevantes con el retriever (MMR + MultiQuery ± Hybrid)
     2) Formatea el contexto para el prompt RAG
     3) Genera la respuesta con el LLM
     4) Calcula confianza y extrae fuentes
-    5) Devuelve un RagAnswer con toda la información
+    5) Devuelve un dict con toda la información
 
     Casos especiales manejados:
     - Sin documentos encontrados → respuesta de error con baja confianza
@@ -195,11 +165,13 @@ def query_rag(query: str) -> RagAnswer:
     # Caso 1: No se recuperó ningún documento
     # ==========================================
     if not docs:
-        return RagAnswer(
-            answer="No se encontró información relevante en la base de conocimiento.",
-            confidence=0.1,
-            sources=[],
-        )
+        return {
+            "answer": "No se encontró información relevante en la base de conocimiento.",
+            "confidence": 0.1,
+            "sources": [],
+            "rag_context": "",
+            "requires_human": True,
+        }
 
     # Formatear contexto y extraer fuentes
     context = format_context(docs)
@@ -209,21 +181,21 @@ def query_rag(query: str) -> RagAnswer:
     # Caso 2: Documentos existen pero sin contenido útil
     # ==========================================
     if not context.strip():
-        return RagAnswer(
-            answer="Se encontraron documentos, pero no contienen información útil.",
-            confidence=0.2,
-            sources=sources,
-        )
+        return {
+            "answer": "Se encontraron documentos, pero no contienen información útil.",
+            "confidence": 0.2,
+            "sources": sources,
+        }
 
     # ==========================================
     # Caso normal: ejecutar pipeline RAG
     # ==========================================
     answer = rag_chain.invoke(query)
-    confidence = compute_confidence(query, docs)
+    confidence = compute_confidence(answer, docs)
 
-    # Devolver respuesta tipada
-    return RagAnswer(
-        answer=answer,
-        confidence=confidence,
-        sources=sources,
-    )
+    # Devolver respuesta
+    return {
+        "answer": answer,
+        "confidence": confidence,
+        "sources": sources
+    }

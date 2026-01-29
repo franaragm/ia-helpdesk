@@ -25,8 +25,12 @@ st.set_page_config(
 # y se mantiene viva durante toda la sesión del usuario
 if "helpdesk" not in st.session_state:
     st.session_state.helpdesk = compile_helpdesk()
-    st.session_state.tickets = {}
 
+if "tickets" not in st.session_state:
+    st.session_state.tickets = {}
+    
+if "example_query" not in st.session_state:
+    st.session_state.example_query = ""
 
 # ======================================================
 # Utilidades de configuración RAG
