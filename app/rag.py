@@ -46,30 +46,56 @@ def format_context(docs: List[Document]) -> str:
     return "\n\n".join(parts)
 
 
-def compute_confidence(rag_answer: str | None, docs: List[Document]) -> float:
+def compute_confidence(query: str, rag_answer: str | None, docs: List[Document]) -> float:
     """
-    Calcula una confianza heurística simple basada en:
-    - Si hay documentos
-    - Si RAG sugiere que no puede responder
-    Devuelve un número entre 0 y 1.
+    Calcula una confianza heurística entre 0 y 1 basada en:
+    - Presencia de documentos
+    - Calidad y longitud de la respuesta RAG
+    - Coincidencia parcial de la query en la respuesta
+    - Señales de "no sabe/no información" en la respuesta
     """
 
     if not docs:
         return 0.0  # sin documentos, confianza mínima
 
     if not rag_answer:
-        return 0.2  # documentos pero RAG no generó respuesta
+        return 0.1  # documentos pero RAG no generó respuesta
 
     answer_lower = rag_answer.lower()
+    query_lower = query.lower()
 
-    # Penalización si RAG indica no saber / no hay información
-    if "no contiene información" in answer_lower or \
-       "no se encontró información" in answer_lower or \
-       "no incluye información" in answer_lower:
-        return 0.3  # confianza baja
+    # Penalización si RAG indica que no sabe
+    if any(phrase in answer_lower for phrase in [
+        "no contiene información",
+        "no se encontró información",
+        "no incluye información",
+        "no puedo responder",
+        "desconozco"
+    ]):
+        return 0.2  # muy baja confianza
 
-    # Si RAG genera algo, confianza moderada-alta
-    return 0.6  # valor base para respuestas RAG
+    # Confianza base
+    confidence = 0.5
+
+    # Ajuste según cantidad de documentos
+    if len(docs) >= 5:
+        confidence += 0.2
+    elif len(docs) >= 3:
+        confidence += 0.1
+
+    # Ajuste según longitud de la respuesta
+    if len(rag_answer.split()) > 50:
+        confidence += 0.1
+    elif len(rag_answer.split()) < 10:
+        confidence -= 0.1
+
+    # Ajuste según coincidencia con la query
+    matches = sum(1 for word in query_lower.split() if word in answer_lower)
+    match_ratio = matches / max(1, len(query_lower.split()))
+    confidence += 0.3 * match_ratio  # hasta +0.3 si todo coincide
+
+    # Limitar rango entre 0 y 1
+    return min(max(confidence, 0.0), 1.0)
 
 
 def extract_sources(docs: List[Document]) -> List[str]:
@@ -191,7 +217,7 @@ def query_rag(query: str) -> dict:
     # Caso normal: ejecutar pipeline RAG
     # ==========================================
     answer = rag_chain.invoke(query)
-    confidence = compute_confidence(answer, docs)
+    confidence = compute_confidence(query, answer, docs)
 
     # Devolver respuesta
     return {
