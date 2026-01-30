@@ -1,10 +1,12 @@
-from typing import List
+from typing import List, Tuple
 import streamlit as st
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from config_base import GENERATION_MODEL, SEARCH_K
 from .services.llm_client import llm_chain_openai
+from .constants import RAG_NEGATIVE_PHRASES, STOPWORDS
+from .vectorstore import get_vectorstore
 from .retrievers import build_retriever
 from .prompts import rag_prompt
 
@@ -46,55 +48,84 @@ def format_context(docs: List[Document]) -> str:
     return "\n\n".join(parts)
 
 
-def compute_confidence(query: str, rag_answer: str | None, docs: List[Document]) -> float:
+def compute_confidence(query: str, rag_answer: str | None, docs: List[Document], scored_docs: List[Tuple[Document, float]]) -> float:
     """
     Calcula una confianza heurística entre 0 y 1 basada en:
     - Presencia de documentos
+    - Scores de similitud del vectorstore
     - Calidad y longitud de la respuesta RAG
     - Coincidencia parcial de la query en la respuesta
-    - Señales de "no sabe/no información" en la respuesta
+    - Señales explícitas de "no sabe / no información"
     """
 
-    if not docs:
-        return 0.0  # sin documentos, confianza mínima
-
-    if not rag_answer:
-        return 0.1  # documentos pero RAG no generó respuesta
+    # =========================
+    # Guard rails duros
+    # =========================
+    if not docs or not rag_answer:
+        return 0.0  # sin documentos o sin respuesta
 
     answer_lower = rag_answer.lower()
     query_lower = query.lower()
 
-    # Penalización si RAG indica que no sabe
-    if any(phrase in answer_lower for phrase in [
-        "no contiene información",
-        "no se encontró información",
-        "no incluye información",
-        "no puedo responder",
-        "desconozco"
-    ]):
+    # =========================
+    # Penalización fuerte si el modelo dice que no sabe
+    # =========================
+    if any(phrase in answer_lower for phrase in RAG_NEGATIVE_PHRASES):
         return 0.2  # muy baja confianza
 
+    # =========================
     # Confianza base
-    confidence = 0.5
+    # =========================
+    confidence = 0.4
+    
+    # =========================
+    # Señal de retrieval (SCORES)
+    # =========================
+    if scored_docs:
+        distances = [score for _, score in scored_docs]
 
-    # Ajuste según cantidad de documentos
+        # Normalizar distancia → similitud (0..1]
+        similarities = [1 / (1 + d) for d in distances]
+
+        avg_similarity = sum(similarities) / len(similarities)
+
+        # Peso fuerte: retrieval es clave
+        confidence += 0.4 * avg_similarity
+
+    # =========================
+    # Cantidad de documentos útiles
+    # =========================
     if len(docs) >= 5:
-        confidence += 0.2
+        confidence += 0.1
     elif len(docs) >= 3:
-        confidence += 0.1
+        confidence += 0.05
 
-    # Ajuste según longitud de la respuesta
-    if len(rag_answer.split()) > 50:
-        confidence += 0.1
-    elif len(rag_answer.split()) < 10:
+    # =========================
+    # Longitud de la respuesta
+    # =========================
+    answer_len = len(rag_answer.split())
+
+    if answer_len > 50:
+        confidence += 0.05
+    elif answer_len < 10:
         confidence -= 0.1
 
-    # Ajuste según coincidencia con la query
-    matches = sum(1 for word in query_lower.split() if word in answer_lower)
-    match_ratio = matches / max(1, len(query_lower.split()))
-    confidence += 0.3 * match_ratio  # hasta +0.3 si todo coincide
+    # =========================
+    # Coincidencia léxica query ↔ respuesta
+    # =========================
+    query_words = [
+        w for w in query_lower.split()
+        if w not in STOPWORDS
+    ]
 
-    # Limitar rango entre 0 y 1
+    if query_words:
+        matches = sum(1 for w in query_words if w in answer_lower)
+        match_ratio = matches / len(query_words)
+        confidence += 0.2 * match_ratio
+
+    # =========================
+    # Clamp final
+    # =========================
     return min(max(confidence, 0.0), 1.0)
 
 
@@ -115,6 +146,21 @@ def extract_sources(docs: List[Document]) -> List[str]:
             sources.append(filename)
 
     return sources
+
+
+def empty_rag_response(message: str, sources=None) -> dict:
+    """
+    Devuelve una respuesta RAG vacía con un mensaje específico.
+    Utilizado en casos donde no se pueden recuperar documentos relevantes.
+    """
+    return {
+        "answer": message,
+        "confidence": 0.0,
+        "sources": sources or [],
+        "rag_context": "",
+        "requires_human": True,
+    }
+
 
 
 # ======================================================
@@ -186,18 +232,14 @@ def query_rag(query: str) -> dict:
 
     # Recuperar documentos (también se usan para scoring y fuentes)
     docs: List[Document] = retriever.invoke(query)
-
+    
     # ==========================================
     # Caso 1: No se recuperó ningún documento
     # ==========================================
     if not docs:
-        return {
-            "answer": "No se encontró información relevante en la base de conocimiento.",
-            "confidence": 0.1,
-            "sources": [],
-            "rag_context": "",
-            "requires_human": True,
-        }
+        return empty_rag_response(
+            "No se encontró información relevante en la base de conocimiento."
+        )
 
     # Formatear contexto y extraer fuentes
     context = format_context(docs)
@@ -207,17 +249,22 @@ def query_rag(query: str) -> dict:
     # Caso 2: Documentos existen pero sin contenido útil
     # ==========================================
     if not context.strip():
-        return {
-            "answer": "Se encontraron documentos, pero no contienen información útil.",
-            "confidence": 0.2,
-            "sources": sources,
-        }
+        return empty_rag_response(
+            "Se encontraron documentos, pero no contienen información útil.",
+            sources=sources
+        )
 
     # ==========================================
     # Caso normal: ejecutar pipeline RAG
     # ==========================================
     answer = rag_chain.invoke(query)
-    confidence = compute_confidence(query, answer, docs)
+    
+    # Acceso directo al vectorstore para scoring (opcional)
+    vectorstore = get_vectorstore()
+    scored_docs = vectorstore.similarity_search_with_score(query, k=SEARCH_K)
+    
+    # Calcular confianza pieza clave del sistema para posterior clasificación
+    confidence = compute_confidence(query, answer, docs, scored_docs)
 
     # Devolver respuesta
     return {

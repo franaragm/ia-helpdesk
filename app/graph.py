@@ -30,13 +30,13 @@ def run_rag(state: HelpdeskState) -> Dict:
         "rag_context": result.get("rag_context", result["answer"]),
         "history": [
             "RAG ejecutado con MultiQuery + MMR",
-            f"Confianza heurística obtenida: {result['confidence']}",
+            f"Confianza heurística obtenida: {result['confidence']:.2f}",
             f"Fuentes consultadas: {len(result['sources'])}",
         ],
     }
 
 # ======================================================
-# NODO 2: CLASIFICAR (AUTOMÁTICO VS ESCALADO)
+# NODO 2: CLASIFICAR (AUTOMÁTICO VS ESCALADO) NODO CLAVE DEL SISTEMA
 # ======================================================
 
 def classify_with_context(state: HelpdeskState) -> Dict:
@@ -45,6 +45,32 @@ def classify_with_context(state: HelpdeskState) -> Dict:
     o si debe escalarse a un humano.
     """
 
+    confidence = state.get("confidence", 0.0)
+
+    # =========================
+    # Atajos deterministas
+    # =========================
+    if confidence >= 0.75:
+        return {
+            "category": "automatic",
+            "history": [
+                "Clasificación automática por alta confianza.",
+                f"Confianza: {confidence:.2f}",
+            ],
+        }
+
+    if confidence <= 0.30:
+        return {
+            "category": "escalated",
+            "history": [
+                "Clasificación automática por baja confianza.",
+                f"Confianza: {confidence:.2f}",
+            ],
+        }
+
+    # =========================
+    # Zona gris → LLM decide
+    # =========================
     llm = llm_chain_openai(
         model=OPENAI_LLM_MODEL,
         temperature=0.1,
@@ -54,7 +80,7 @@ def classify_with_context(state: HelpdeskState) -> Dict:
         classification_prompt.format(
             question=state["query"],
             context=state.get("rag_context", ""),
-            confidence=state.get("confidence", 0),
+            confidence=confidence,
         )
     )
 
@@ -65,16 +91,17 @@ def classify_with_context(state: HelpdeskState) -> Dict:
     elif "escalated" in content:
         category = "escalated"
     else:
-        # fallback defensivo basado en confianza
-        category = "automatic" if state.get("confidence", 0) >= 0.6 else "escalated"
+        category = "escalated"  # fallback conservador
 
     return {
         "category": category,
         "history": [
-            f"Clasificación realizada: {category}",
+            f"Clasificación realizada por LLM: {category}",
+            f"Confianza: {confidence:.2f}",
             f"Justificación LLM: {response.content}",
         ],
     }
+
 
 
 # ======================================================

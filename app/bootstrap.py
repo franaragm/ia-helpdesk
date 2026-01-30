@@ -22,16 +22,17 @@ def init_chroma() -> None:
     count_before = vectorstore._collection.count()
     print(f"📦 Documentos indexados actualmente: {count_before}")
 
-    # Cargar documentos y generar chunks
-    docs = load_documents()
-    if not docs:
+    # Cargar chunks desde documentos
+    chunk_docs = load_documents()
+    
+    if not chunk_docs:
         print("⚠️ No se encontraron documentos para indexar.")
         return
 
     print("🧠 Indexando documentos nuevos (si existen)...")
 
     # Indexar solo los documentos nuevos (evita duplicados)
-    create_vectorstore(docs)
+    create_vectorstore(chunk_docs)
 
     # Contar nuevamente después de la indexación
     count_after = vectorstore._collection.count()

@@ -32,7 +32,6 @@ def _get_doc_type(filename: str) -> str:
     else:
         return "general"
     
-
 # ===============================
 # funciones públicas
 # ===============================
