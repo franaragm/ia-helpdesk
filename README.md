@@ -191,6 +191,3 @@ El proyecto está preparado para añadir:
 
 ---
 
-Si quieres, puedo hacer también **una versión con diagrama de flujo visual del grafo RAG + Human-in-the-loop**, que queda muy didáctico para desarrolladores y usuarios.
-
-¿Quieres que haga eso?
