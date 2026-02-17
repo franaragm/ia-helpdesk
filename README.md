@@ -95,9 +95,10 @@ source .venv/bin/activate      # iniciar entorno virtual en macOS / Linux
 
 ---
 
-### 📦 2) Instalar dependencias en el entorno virtual 
+### 📦 2) Instalar dependencias en el entorno virtual iniciado
 
 Hay dos opciones, se recomienda usar `requirements.lock` para asegurar la reproducibilidad del entorno.
+
 ```bash
 pip install -r requirements.txt   # instalar dependencias principales del proyecto
 pip install -r requirements.lock  # instalar dependencias fijadas
@@ -114,7 +115,11 @@ pip freeze > requirements.lock  # Genera un nuevo archivo lock con las dependenc
 
 ### 🔐 3) Configurar variables de entorno
 
+Copiar y renombrar el archivo `.env.example` a `.env`:
+
+```bash
 cp .env.example .env
+```
 
 Editar `.env` con tus claves:
 
@@ -133,7 +138,7 @@ ENV=dev
 
 ---
 
-### ▶️ 4) Ejecutar la aplicación
+### ▶️ 4) Ejecutar la aplicación en el entorno virtual iniciado
 
 ```bash
 streamlit run run_app.py
