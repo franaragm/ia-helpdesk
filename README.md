@@ -136,6 +136,12 @@ ENV=dev
 > Solo se usan las APIs que tengas configuradas; OpenAI y OpenRouter son opcionales según tu flujo.
 > IMPORTANTE - El cliente usado en este proyecto es el de OpenAI, con lo que solo hace falta indicar OPENAI_API_KEY
 
+#### 🔑 Obtener API keys:
+
+* OpenRouter → [https://openrouter.ai/keys](https://openrouter.ai/keys)
+* OpenAI → [https://platform.openai.com/settings/organization/api-keys](https://platform.openai.com/settings/organization/api-keys)
+* Google AI → [https://aistudio.google.com/api-keys](https://aistudio.google.com/api-keys)
+
 ---
 
 ### ▶️ 4) Ejecutar la aplicación en el entorno virtual iniciado
