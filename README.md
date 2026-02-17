@@ -85,22 +85,30 @@ Si es escalado → Nodo humano (Human-in-the-loop) → Nodo de generación de re
 
 ## 🚀 Instalación y uso
 
-### 🔧 1) Crear entorno virtual
+### 🔧 1) Crear entorno virtual y activar entorno virtual
 
-python -m venv .venv
-source .venv/bin/activate      # macOS / Linux
-.venv\Scripts\activate         # Windows
+```bash
+python -m venv .venv           # crear entorno virtual
+source .venv/bin/activate      # iniciar entorno virtual en macOS / Linux
+.venv\Scripts\activate         # iniciar entorno virtual en Windows
+```
 
 ---
 
-### 📦 2) Instalar dependencias
+### 📦 2) Instalar dependencias en el entorno virtual 
 
-pip install -r requirements.txt
-pip install -r requirements.lock
+Hay dos opciones, se recomienda usar `requirements.lock` para asegurar la reproducibilidad del entorno.
+```bash
+pip install -r requirements.txt   # instalar dependencias principales del proyecto
+pip install -r requirements.lock  # instalar dependencias fijadas
+```
 
-Para fijar nuevas dependencias:
+Para fijar nuevas dependencias, añadir paquete en requeriments.txt:
 
-pip freeze > requirements.lock
+```bash
+pip install -r requirements.txt # Instala las dependencias listadas en requirements.txt (si hay nuevas)
+pip freeze > requirements.lock  # Genera un nuevo archivo lock con las dependencias actuales
+```
 
 ---
 
@@ -110,18 +118,26 @@ cp .env.example .env
 
 Editar `.env` con tus claves:
 
+```
 OPENAI_API_KEY=API_KEY_HERE
+GOOGLEAI_API_KEY=API_KEY_HERE
 OPENROUTER_API_KEY=API_KEY_HERE
-OPENROUTER_BASE_URL=[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1)
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+GROQ_API_KEY=API_KEY_HERE
+GROQ_BASE_URL=https://api.groq.com/openai/v1
 ENV=dev
+```
 
 > Solo se usan las APIs que tengas configuradas; OpenAI y OpenRouter son opcionales según tu flujo.
+> IMPORTANTE - El cliente usado en este proyecto es el de OpenAI, con lo que solo hace falta indicar OPENAI_API_KEY
 
 ---
 
 ### ▶️ 4) Ejecutar la aplicación
 
+```bash
 streamlit run run_app.py
+```
 
 Disponible en: [http://localhost:8501](http://localhost:8501)
 
